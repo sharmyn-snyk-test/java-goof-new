@@ -75,7 +75,7 @@ jobs:
         # Use || true to not fail the pipeline
 
       - name: Snyk Code test
-        run: snyk code test --debug --org=6a72044c-629a-4d2f-b8c9-4f6b386c9b27 --sarif > snyk-code.sarif || true
+        run: snyk code test --debug --org=${{ env.SNYK_ORG_ID }} --sarif > snyk-code.sarif || true
 
         # Runs Snyk Open Source (SCA) analysis and uploads result to Snyk.
       - name: Snyk Open Source monitor

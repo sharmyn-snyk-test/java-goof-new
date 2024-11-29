@@ -84,7 +84,7 @@ jobs:
         # Runs Snyk Infrastructure as Code (IaC) analysis and uploads result to Snyk.
         # Use || true to not fail the pipeline.
       - name: Snyk IaC test and report
-        run: snyk iac test --report || true
+        run: snyk iac test --report --target-reference=cicd || true
 
         # Push the Snyk Code results into GitHub Code Scanning tab
       - name: Upload result to GitHub Code Scanning
@@ -92,13 +92,13 @@ jobs:
         with:
           sarif_file: snyk-code.sarif
 
-      - name: Automated Github Action Maven Version Bump
-        uses: mickem/gh-action-bump-maven-version@v1.0.0
+    #  - name: Automated Github Action Maven Version Bump
+    #    uses: mickem/gh-action-bump-maven-version@v1.0.0
             
-        # Publish the built artifact to the github maven repo
-      - name: Publish to GitHub Packages Apache Maven
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: steps.bump.outputs.bumped == false
-        run: |
-          mvn deploy -s $GITHUB_WORKSPACE/settings.xml
+    #    # Publish the built artifact to the github maven repo
+    #  - name: Publish to GitHub Packages Apache Maven
+    #    env:
+    #      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #    if: steps.bump.outputs.bumped == false
+    #    run: |
+    #      mvn deploy -s $GITHUB_WORKSPACE/settings.xml

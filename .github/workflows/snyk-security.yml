@@ -58,7 +58,7 @@ jobs:
       - name: build the app
         run: |
           mvn clean
-          mvn -B package --file pom.xml
+          mvn -B install --file pom.xml
     
       - name: Set up Snyk CLI to check for security issues
         # Snyk can be used to break the build when it detects security issues.

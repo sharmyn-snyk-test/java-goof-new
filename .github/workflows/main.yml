@@ -1,0 +1,83 @@
+name: Snyk Security Scan with Summary
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  snyk_scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Setup Java for the Maven project
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17' # Adjust to your project's version
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # 2. Run Snyk Security Scan and output JSON
+      # The continue-on-error is crucial to ensure the JSON file is created, even if Snyk finds issues and would normally fail the step.
+      - name: Run Snyk Test (Open Source, Code, & Container) and save JSON
+        id: snyk_test
+        continue-on-error: true
+        uses: snyk/actions/maven@master # Use the specific action for the Maven project
+        with:
+          args: --all-projects --json-file-output=snyk-results.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      # 3. Process Snyk JSON and create Job Summary Table
+      # We use 'jq' to extract severity counts from the JSON output file.
+      - name: Generate Security Summary Table
+        run: |
+          # The JSON output is complex and can contain multiple test results.
+          # This script aggregates the counts for Open Source (dependency) vulnerabilities.
+          
+          # Install jq for JSON processing
+          sudo apt-get install jq -y
+          
+          # Read the JSON file content
+          SNYK_JSON=$(cat snyk-results.json)
+          
+          # Use jq to extract and aggregate vulnerability counts by severity for the main project
+          # Note: The structure might vary. This attempts to get the severity counts from the first project result.
+          HIGH_COUNT=$(echo "$SNYK_JSON" | jq -r '[.runs[] | select(.tool.driver.name == "snyk") | .results[].properties | .severity | select(. == "high")] | length')
+          MEDIUM_COUNT=$(echo "$SNYK_JSON" | jq -r '[.runs[] | select(.tool.driver.name == "snyk") | .results[].properties | .severity | select(. == "medium")] | length')
+          LOW_COUNT=$(echo "$SNYK_JSON" | jq -r '[.runs[] | select(.tool.driver.name == "snyk") | .results[].properties | .severity | select(. == "low")] | length')
+          
+          TOTAL_ISSUES=$((HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
+          
+          # Determine the overall status emoji
+          STATUS_EMOJI="✅"
+          if [ "$TOTAL_ISSUES" -gt 0 ]; then
+            STATUS_EMOJI="❌"
+          fi
+          
+          # Construct the Markdown table and write to the job summary
+          SUMMARY_MARKDOWN=$(cat <<-EOF
+          
+          ### Snyk Security Scan Summary ${STATUS_EMOJI}
+          
+          | Metric | Status | Count |
+          | :--- | :---: | :---: |
+          | **Total Issues Found** | ${STATUS_EMOJI} | **${TOTAL_ISSUES}** |
+          | High Severity | ❌ | ${HIGH_COUNT} |
+          | Medium Severity | ⚠️ | ${MEDIUM_COUNT} |
+          | Low Severity | ⚪ | ${LOW_COUNT} |
+          
+          <br>
+          
+          > For full vulnerability details, please check the logs of the \`Run Snyk Test\` step or the **Security** tab (if SARIF is enabled).
+          
+          EOF
+          )
+          
+          # Append the generated summary to the $GITHUB_STEP_SUMMARY file
+          echo "$SUMMARY_MARKDOWN" >> $GITHUB_STEP_SUMMARY

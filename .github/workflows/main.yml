@@ -1,99 +1,54 @@
-name: Snyk Security Scan with Custom Summary
+name: Snyk Security Scan with Summary
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ "main" ]
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - main
-      - master
+    branches: [ "main" ]
 
 jobs:
-  snyk:
+  snyk_scan:
     runs-on: ubuntu-latest
-    
-    env:
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      # Define the name of the Snyk output file
-      SNYK_OUTPUT_FILE: snyk-results.json
-
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      # 1. Setup Java for the Maven project (Required to resolve inter-module dependencies)
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'maven'
 
-      # Install jq for JSON processing, required for the custom summary step
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      # 1. FIX FOR MAVEN DEPENDENCY RESOLUTION ERROR 
+      # 1.1 Add Maven Install Step (Crucial fix for your initial dependency errors)
       - name: Maven Build and Install
         run: mvn -B install -DskipTests
+      
+      # 2. Install Snyk CLI on the runner
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+        
+      # 3. Run Snyk Test (Open Source, Code, & Container) and save JSON
+      #    We use --json, not --json-file-output, as the setup action handles the output redirection.
+      - name: Run Snyk Test and save JSON
+        id: snyk_test
+        # Set continue-on-error: true here to ensure the summary step runs even if issues are found
+        continue-on-error: true
+        run: snyk test --all-projects --json > snyk-results.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      # 2. RUN SNYK TEST TO GENERATE JSON OUTPUT
-      # Note: The official Snyk action is simpler, but a manual run is needed to control
-      # the JSON file output for the custom jq script.
-      # We use '|| true' to prevent the action from failing immediately, allowing
-      # the subsequent summary step to process the results even if vulns are found.
-      - name: Run Snyk Test and Generate JSON
-        run: snyk test --all-projects --json-file-output=${{ env.SNYK_OUTPUT_FILE }} || true
-
-      # 3. GENERATE CUSTOM JOB SUMMARY TABLE
-      # ⚠️ This is the critical step to produce the table you want.
-      - name: Generate Custom Test Summary Table
+      # 4. Process Snyk JSON and create Job Summary Table (CRITICAL FIX HERE)
+      - name: Generate Security Summary Table
         run: |
-          # The Snyk output is an array of results for each project.
-          # We use a filter to check if the file exists and is not empty.
-          if [ -s "${{ env.SNYK_OUTPUT_FILE }}" ]; then
-            echo "## Snyk Test Summary" >> $GITHUB_STEP_SUMMARY
-            echo "| Test result | Passed | Failed | Skipped | Time duration |" >> $GITHUB_STEP_SUMMARY
-            echo "| :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-            
-            # Use jq to iterate over the array of projects, extracting and calculating metrics.
-            jq -c '.[] | {
-              name: (.displayTargetFile | split("/") | last),
-              ok: (.ok),
-              vulnerabilities: (.vulnerabilities | length),
-              # Snyk CLI doesn't provide "Passed/Skipped/Duration" directly.
-              # For this example, we'll use a placeholder for Passed/Skipped/Duration 
-              # and report on vulnerability status.
-              # If you need Passed/Skipped counts, your test runner needs to provide them.
-              # Snyk reports on VULNERABILITIES (Failed) and total dependencies (Total).
-              dependencies: (.dependencyCount)
-            }' ${{ env.SNYK_OUTPUT_FILE }} | while read result; do
-              
-              project_name=$(echo "$result" | jq -r '.name')
-              vulnerabilities=$(echo "$result" | jq -r '.vulnerabilities')
-              dependencies=$(echo "$result" | jq -r '.dependencies')
-              
-              # Calculate "Passed" as Dependencies - Vulnerabilities
-              passed=$((dependencies - vulnerabilities))
-              
-              # Determine the overall result icon
-              if [ "$vulnerabilities" -gt 0 ]; then
-                status="🔴 Fail"
-              else
-                status="🟢 Pass"
-              fi
-
-              # Print the table row. Note the placeholder values (0 skipped, N/A duration)
-              # as Snyk JSON doesn't contain the detailed execution data from the image.
-              echo "| $status ($project_name) | $passed | $vulnerabilities | 0 | N/A |" >> $GITHUB_STEP_SUMMARY
-
-            done
-            echo "---" >> $GITHUB_STEP_SUMMARY
-            echo "Note: Passed/Failed here refers to Dependency Count vs. Vulnerabilities Found." >> $GITHUB_STEP_SUMMARY
-            echo "Skipped and Duration are placeholders as the Snyk JSON output does not provide JUnit-style metrics." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Snyk test output file not found or was empty. Check previous steps for errors." >> $GITHUB_STEP_SUMMARY
-            exit 1
+          # Install jq for JSON processing
+          # We check if it's already installed to avoid reinstalling if using snyk/actions/setup which might include it
+          if ! command -v jq &> /dev/null; then
+              sudo apt-get update && sudo apt-get install jq -y
           fi
+          
+          # Check if the Snyk output file exists and has content (handles empty runs)
+          SNYK_FILE="snyk-results.json"
+          if [ ! -s "$SNYK_FILE" ]; then
+            echo "##
